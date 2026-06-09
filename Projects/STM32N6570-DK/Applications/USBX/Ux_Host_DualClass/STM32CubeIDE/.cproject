@@ -255,4 +255,5 @@
 			<resource resourceType="PROJECT" workspacePath="/Ux_Host_DualClass"/>
 		</configuration>
 	</storageModule>
+	<storageModule moduleId="org.eclipse.cdt.make.core.buildtargets"/>
 </cproject>

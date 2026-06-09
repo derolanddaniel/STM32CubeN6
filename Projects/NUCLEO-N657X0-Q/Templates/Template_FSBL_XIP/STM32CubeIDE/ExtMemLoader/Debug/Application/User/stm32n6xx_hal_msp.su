@@ -1,0 +1,4 @@
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/stm32n6xx_hal_msp.c:51:6:HAL_MspInit	0	static
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/stm32n6xx_hal_msp.c:59:6:HAL_MspDeInit	0	static
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/stm32n6xx_hal_msp.c:69:6:HAL_XSPI_MspInit	440	static
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/stm32n6xx_hal_msp.c:148:6:HAL_XSPI_MspDeInit	8	static

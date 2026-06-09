@@ -65,6 +65,205 @@ static void SystemClock_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/* Write Enable (0x06F9) + Write CR2 a 'addr' = 'val', en octal (DTR si dtr!=0, sinon STR) */
+static void Recovery_WrCR2(uint8_t dtr, uint32_t addr, uint8_t val)
+{
+  XSPI_RegularCmdTypeDef c;
+  uint8_t data[2];
+  data[0] = val; data[1] = 0x00U;
+
+  /* Write Enable octal */
+  (void)memset(&c, 0, sizeof(c));
+  c.OperationType      = HAL_XSPI_OPTYPE_COMMON_CFG;
+  c.IOSelect           = HAL_XSPI_SELECT_IO_7_0;
+  c.InstructionMode    = HAL_XSPI_INSTRUCTION_8_LINES;
+  c.InstructionWidth   = HAL_XSPI_INSTRUCTION_16_BITS;
+  c.InstructionDTRMode = dtr ? HAL_XSPI_INSTRUCTION_DTR_ENABLE : HAL_XSPI_INSTRUCTION_DTR_DISABLE;
+  c.Instruction        = 0x06F9U;
+  c.AddressMode        = HAL_XSPI_ADDRESS_NONE;
+  c.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+  c.DataMode           = HAL_XSPI_DATA_NONE;
+  c.DQSMode            = HAL_XSPI_DQS_DISABLE;
+  (void)HAL_XSPI_Command(&hxspi2, &c, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+
+  /* Write Configuration Register 2 (0x728D) */
+  (void)memset(&c, 0, sizeof(c));
+  c.OperationType      = HAL_XSPI_OPTYPE_COMMON_CFG;
+  c.IOSelect           = HAL_XSPI_SELECT_IO_7_0;
+  c.InstructionMode    = HAL_XSPI_INSTRUCTION_8_LINES;
+  c.InstructionWidth   = HAL_XSPI_INSTRUCTION_16_BITS;
+  c.InstructionDTRMode = dtr ? HAL_XSPI_INSTRUCTION_DTR_ENABLE : HAL_XSPI_INSTRUCTION_DTR_DISABLE;
+  c.Instruction        = 0x728DU;
+  c.AddressMode        = HAL_XSPI_ADDRESS_8_LINES;
+  c.AddressDTRMode     = dtr ? HAL_XSPI_ADDRESS_DTR_ENABLE : HAL_XSPI_ADDRESS_DTR_DISABLE;
+  c.AddressWidth       = HAL_XSPI_ADDRESS_32_BITS;
+  c.Address            = addr;
+  c.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+  c.DataMode           = HAL_XSPI_DATA_8_LINES;
+  c.DataDTRMode        = dtr ? HAL_XSPI_DATA_DTR_ENABLE : HAL_XSPI_DATA_DTR_DISABLE;
+  c.DataLength         = dtr ? 2U : 1U;
+  c.DQSMode            = HAL_XSPI_DQS_DISABLE;
+  if (HAL_XSPI_Command(&hxspi2, &c, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) == HAL_OK)
+  {
+    (void)HAL_XSPI_Transmit(&hxspi2, data, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+  }
+  HAL_Delay(10);
+}
+
+/* --- Mini sortie UART brute sur USART1 (PE5/PE6, AF7) = VCP COM13 a 115200 --- */
+static void Recovery_UartInit(void)
+{
+  GPIO_InitTypeDef g = {0};
+  uint32_t clk;
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  g.Pin = GPIO_PIN_5 | GPIO_PIN_6;
+  g.Mode = GPIO_MODE_AF_PP; g.Pull = GPIO_NOPULL;
+  g.Speed = GPIO_SPEED_FREQ_VERY_HIGH; g.Alternate = GPIO_AF7_USART1;
+  HAL_GPIO_Init(GPIOE, &g);
+  __HAL_RCC_USART1_CLK_ENABLE();
+#if defined(RCC_PERIPHCLK_USART1)
+  clk = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_USART1);
+#else
+  clk = 0U;
+#endif
+  if (clk == 0U) { clk = HAL_RCC_GetPCLK2Freq(); }
+  USART1->CR1 = 0U;
+  USART1->BRR = (clk + 57600U) / 115200U;
+  USART1->CR1 = USART_CR1_TE | USART_CR1_UE;
+}
+static void Recovery_UartStr(const char *s)
+{
+  while (*s != '\0')
+  {
+    while ((USART1->ISR & USART_ISR_TXE_TXFNF) == 0U) {}
+    USART1->TDR = (uint8_t)(*s++);
+  }
+}
+static void Recovery_UartHex(uint8_t b)
+{
+  static const char h[] = "0123456789ABCDEF";
+  while ((USART1->ISR & USART_ISR_TXE_TXFNF) == 0U) {}
+  USART1->TDR = (uint8_t)h[(b >> 4) & 0xFU];
+  while ((USART1->ISR & USART_ISR_TXE_TXFNF) == 0U) {}
+  USART1->TDR = (uint8_t)h[b & 0xFU];
+  while ((USART1->ISR & USART_ISR_TXE_TXFNF) == 0U) {}
+  USART1->TDR = (uint8_t)' ';
+}
+
+/* Telemetrie LED : lit l'ID JEDEC en OPI/DTR puis en SPI, et signale via les LED
+ * user (PG0=vert, PG10=rouge) pendant ~8s :
+ *   - VERT seul clignote      -> la puce repond en OPI (ID=0xC2) : vivante en Octal
+ *   - VERT+ROUGE clignotent   -> la puce repond en SPI
+ *   - ROUGE seul clignote     -> aucune reponse (ni OPI ni SPI) */
+static void Recovery_Telemetry(void)
+{
+  XSPI_RegularCmdTypeDef c;
+  uint8_t idopi[4] = {0};
+  uint8_t idspi[4] = {0};
+  int opi_ok = 0, spi_ok = 0, k;
+  GPIO_InitTypeDef g = {0};
+
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+  g.Pin = GPIO_PIN_0 | GPIO_PIN_10;
+  g.Mode = GPIO_MODE_OUTPUT_PP; g.Pull = GPIO_NOPULL; g.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOG, &g);
+  HAL_GPIO_WritePin(GPIOG, GPIO_PIN_0 | GPIO_PIN_10, GPIO_PIN_RESET);
+
+  Recovery_UartInit();
+  Recovery_UartStr("\r\n=== REC TELEMETRY ===\r\n");
+
+  /* Read ID en OPI/DTR (0x9F60) : on essaie plusieurs nb de cycles dummy et
+   * DQS on/off, car la valeur exacte depend de la config de la puce. */
+  {
+    const uint32_t dummies[5] = {20U, 5U, 8U, 16U, 4U};
+    int di, qi;
+    for (qi = 0; (qi < 2) && (opi_ok == 0); qi++)
+    {
+      for (di = 0; (di < 5) && (opi_ok == 0); di++)
+      {
+        idopi[0] = 0U;
+        (void)memset(&c, 0, sizeof(c));
+        c.OperationType = HAL_XSPI_OPTYPE_COMMON_CFG; c.IOSelect = HAL_XSPI_SELECT_IO_7_0;
+        c.InstructionMode = HAL_XSPI_INSTRUCTION_8_LINES; c.InstructionWidth = HAL_XSPI_INSTRUCTION_16_BITS;
+        c.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_ENABLE; c.Instruction = 0x9F60U;
+        c.AddressMode = HAL_XSPI_ADDRESS_8_LINES; c.AddressDTRMode = HAL_XSPI_ADDRESS_DTR_ENABLE;
+        c.AddressWidth = HAL_XSPI_ADDRESS_32_BITS; c.Address = 0U;
+        c.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+        c.DataMode = HAL_XSPI_DATA_8_LINES; c.DataDTRMode = HAL_XSPI_DATA_DTR_ENABLE; c.DataLength = 4U;
+        c.DummyCycles = dummies[di];
+        c.DQSMode = (qi == 0) ? HAL_XSPI_DQS_ENABLE : HAL_XSPI_DQS_DISABLE;
+        if (HAL_XSPI_Command(&hxspi2, &c, 100U) == HAL_OK)
+        {
+          if (HAL_XSPI_Receive(&hxspi2, idopi, 100U) == HAL_OK)
+          {
+            if (idopi[0] == 0xC2U) { opi_ok = 1; }
+          }
+        }
+      }
+    }
+  }
+
+  /* Read ID en SPI (0x9F, 3 octets) */
+  (void)memset(&c, 0, sizeof(c));
+  c.OperationType = HAL_XSPI_OPTYPE_COMMON_CFG; c.IOSelect = HAL_XSPI_SELECT_IO_7_0;
+  c.InstructionMode = HAL_XSPI_INSTRUCTION_1_LINE; c.InstructionWidth = HAL_XSPI_INSTRUCTION_8_BITS;
+  c.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_DISABLE; c.Instruction = 0x9FU;
+  c.AddressMode = HAL_XSPI_ADDRESS_NONE; c.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+  c.DataMode = HAL_XSPI_DATA_1_LINE; c.DataLength = 3U; c.DummyCycles = 0U; c.DQSMode = HAL_XSPI_DQS_DISABLE;
+  if (HAL_XSPI_Command(&hxspi2, &c, 100U) == HAL_OK)
+  {
+    if (HAL_XSPI_Receive(&hxspi2, idspi, 100U) == HAL_OK)
+    {
+      if (idspi[0] == 0xC2U) { spi_ok = 1; }
+    }
+  }
+
+  /* Trace UART (repetee pour capture facile sur COM13) */
+  for (k = 0; k < 6; k++)
+  {
+    Recovery_UartStr("OPI ");
+    Recovery_UartHex(idopi[0]); Recovery_UartHex(idopi[1]); Recovery_UartHex(idopi[2]);
+    Recovery_UartStr(opi_ok ? "(OK) " : "(--) ");
+    Recovery_UartStr("SPI ");
+    Recovery_UartHex(idspi[0]); Recovery_UartHex(idspi[1]); Recovery_UartHex(idspi[2]);
+    Recovery_UartStr(spi_ok ? "(OK)\r\n" : "(--)\r\n");
+    HAL_Delay(300);
+  }
+
+  /* Signalisation LED ~8s */
+  for (k = 0; k < 16; k++)
+  {
+    if (opi_ok)
+    {
+      HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_0);
+      HAL_GPIO_WritePin(GPIOG, GPIO_PIN_10, GPIO_PIN_RESET);
+    }
+    else if (spi_ok)
+    {
+      HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_0);
+      HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_10);
+    }
+    else
+    {
+      HAL_GPIO_TogglePin(GPIOG, GPIO_PIN_10);
+      HAL_GPIO_WritePin(GPIOG, GPIO_PIN_0, GPIO_PIN_RESET);
+    }
+    HAL_Delay(400);
+  }
+}
+
+/* Recovery : sort la flash du mode Octal (OPI), volatile ET non-volatile, en
+ * essayant DTR-OPI puis STR-OPI. CR2@0x40000000=0 efface le boot-Octal
+ * (DEFSOPI/DEFDOPI non-volatile), CR2@0x00000000=0 sort de l'OPI maintenant. */
+static void Recovery_ExitOPI(void)
+{
+  Recovery_WrCR2(1U, 0x40000000U, 0x00U);  /* DTR : annule boot-Octal non-volatile */
+  Recovery_WrCR2(1U, 0x00000000U, 0x00U);  /* DTR : sort de l'OPI -> SPI */
+  Recovery_WrCR2(0U, 0x40000000U, 0x00U);  /* STR : idem si la puce etait en SOPI */
+  Recovery_WrCR2(0U, 0x00000000U, 0x00U);
+  HAL_Delay(10);
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -274,6 +473,15 @@ static void MX_XSPI2_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN XSPI2_Init 2 */
+
+  /* RECOVERY : sortir la flash du mode Octal (CR2) tant que le peripherique a
+   * la config MACRONIX/DHQC, AVANT toute lecture SFDP.
+   * On ralentit fortement l'horloge XSPI : le DTR octal a pleine vitesse n'est
+   * pas fiable sans calibration, et la puce doit recevoir nos commandes. */
+  (void)HAL_XSPI_SetClockPrescaler(&hxspi2, 19U);
+  Recovery_Telemetry();   /* DIAGNOSTIC LED : la puce repond-elle en OPI / SPI ? */
+  Recovery_ExitOPI();
+  (void)HAL_XSPI_SetClockPrescaler(&hxspi2, 0U);
 
   /* USER CODE END XSPI2_Init 2 */
 

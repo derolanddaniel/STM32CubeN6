@@ -1,0 +1,3 @@
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/system_stm32n6xx_fsbl.c:175:6:SystemInit	1
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/system_stm32n6xx_fsbl.c:330:6:SystemCoreClockUpdate	21
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/system_stm32n6xx_fsbl.c:483:24:SECURE_SystemCoreClockUpdate	1

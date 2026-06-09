@@ -166,6 +166,117 @@ EXTMEM_DRIVER_NOR_SFDP_StatusTypeDef EXTMEM_DRIVER_NOR_SFDP_Init(void *Periphera
   /* Abort any ongoing XSPI action */
   (void)SAL_XSPI_DisableMapMode(&SFDPObject->sfdp_private.SALObject);
 
+  /* ============================ RECOVERY ============================
+   * Si la flash est coincee en Octal/OPI (registre de config non-volatile),
+   * la lecture SFDP en 1 ligne (juste apres) echoue et l'init est abandonnee
+   * AVANT le reset (etape 5). On envoie donc ici, alors que le XSPIM est deja
+   * configure (SAL_XSPI_Init faite), un Reset Enable(0x66)+Reset Memory(0x99)
+   * en OPI/DTR puis OPI/STR puis SPI -> ramene la puce en SPI. Puis on efface
+   * la protection (Write Status Register = 0x00). Inoffensif si deja en SPI. */
+  {
+    XSPI_HandleTypeDef *hx = SFDPObject->sfdp_private.SALObject.hxspi;
+    XSPI_RegularCmdTypeDef rc;
+    uint8_t d2[2] = {0x00U, 0x00U};
+    uint8_t zero = 0x00U;
+
+    /* --- Helper inline via macro locale : envoie une commande simple --- */
+    #define REC_BASE() do {                                  \
+        (void)memset(&rc, 0, sizeof(rc));                    \
+        rc.OperationType      = HAL_XSPI_OPTYPE_COMMON_CFG;  \
+        rc.IOSelect           = HAL_XSPI_SELECT_IO_7_0;      \
+        rc.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;     \
+        rc.DummyCycles        = 0U;                          \
+        rc.DQSMode            = HAL_XSPI_DQS_DISABLE;         \
+      } while(0)
+
+    /* 1) Write Enable en OPI/DTR (0x06F9) */
+    REC_BASE();
+    rc.InstructionMode    = HAL_XSPI_INSTRUCTION_8_LINES;
+    rc.InstructionWidth   = HAL_XSPI_INSTRUCTION_16_BITS;
+    rc.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_ENABLE;
+    rc.Instruction        = 0x06F9U;
+    rc.AddressMode        = HAL_XSPI_ADDRESS_NONE;
+    rc.DataMode           = HAL_XSPI_DATA_NONE;
+    (void)HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+
+    /* 2) Write CR2 @ 0x40000000 = 0x00 : annule le boot-Octal NON-VOLATILE (DEFDOPI) */
+    REC_BASE();
+    rc.InstructionMode    = HAL_XSPI_INSTRUCTION_8_LINES;
+    rc.InstructionWidth   = HAL_XSPI_INSTRUCTION_16_BITS;
+    rc.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_ENABLE;
+    rc.Instruction        = 0x728DU;                 /* OCTA Write CFG Reg 2 */
+    rc.AddressMode        = HAL_XSPI_ADDRESS_8_LINES;
+    rc.AddressDTRMode     = HAL_XSPI_ADDRESS_DTR_ENABLE;
+    rc.AddressWidth       = HAL_XSPI_ADDRESS_32_BITS;
+    rc.Address            = 0x40000000U;
+    rc.DataMode           = HAL_XSPI_DATA_8_LINES;
+    rc.DataDTRMode        = HAL_XSPI_DATA_DTR_ENABLE;
+    rc.DataLength         = 2U;
+    if (HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) == HAL_OK)
+    {
+      (void)HAL_XSPI_Transmit(hx, d2, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+    }
+    HAL_Delay(10);
+
+    /* 3) Write Enable en OPI/DTR a nouveau */
+    REC_BASE();
+    rc.InstructionMode    = HAL_XSPI_INSTRUCTION_8_LINES;
+    rc.InstructionWidth   = HAL_XSPI_INSTRUCTION_16_BITS;
+    rc.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_ENABLE;
+    rc.Instruction        = 0x06F9U;
+    rc.AddressMode        = HAL_XSPI_ADDRESS_NONE;
+    rc.DataMode           = HAL_XSPI_DATA_NONE;
+    (void)HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+
+    /* 4) Write CR2 @ 0x00000000 = 0x00 : sort de l'OPI MAINTENANT -> SPI */
+    REC_BASE();
+    rc.InstructionMode    = HAL_XSPI_INSTRUCTION_8_LINES;
+    rc.InstructionWidth   = HAL_XSPI_INSTRUCTION_16_BITS;
+    rc.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_ENABLE;
+    rc.Instruction        = 0x728DU;
+    rc.AddressMode        = HAL_XSPI_ADDRESS_8_LINES;
+    rc.AddressDTRMode     = HAL_XSPI_ADDRESS_DTR_ENABLE;
+    rc.AddressWidth       = HAL_XSPI_ADDRESS_32_BITS;
+    rc.Address            = 0x00000000U;
+    rc.DataMode           = HAL_XSPI_DATA_8_LINES;
+    rc.DataDTRMode        = HAL_XSPI_DATA_DTR_ENABLE;
+    rc.DataLength         = 2U;
+    if (HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) == HAL_OK)
+    {
+      (void)HAL_XSPI_Transmit(hx, d2, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+    }
+    HAL_Delay(10);
+
+    /* 5) Resets SPI (1 ligne) par securite */
+    REC_BASE();
+    rc.InstructionMode    = HAL_XSPI_INSTRUCTION_1_LINE;
+    rc.InstructionWidth   = HAL_XSPI_INSTRUCTION_8_BITS;
+    rc.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_DISABLE;
+    rc.AddressMode        = HAL_XSPI_ADDRESS_NONE;
+    rc.DataMode           = HAL_XSPI_DATA_NONE;
+    rc.Instruction = 0x66U; (void)HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+    rc.Instruction = 0x99U; (void)HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+    HAL_Delay(10);
+
+    /* 6) Deprotection en SPI : Write Enable (0x06) + Write Status Register (0x01)=0 */
+    REC_BASE();
+    rc.InstructionMode    = HAL_XSPI_INSTRUCTION_1_LINE;
+    rc.InstructionWidth   = HAL_XSPI_INSTRUCTION_8_BITS;
+    rc.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_DISABLE;
+    rc.AddressMode        = HAL_XSPI_ADDRESS_NONE;
+    rc.Instruction = 0x06U; rc.DataMode = HAL_XSPI_DATA_NONE;
+    (void)HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+    rc.Instruction = 0x01U; rc.DataMode = HAL_XSPI_DATA_1_LINE; rc.DataLength = 1U;
+    if (HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) == HAL_OK)
+    {
+      (void)HAL_XSPI_Transmit(hx, &zero, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+    }
+    HAL_Delay(10);
+
+    #undef REC_BASE
+  }
+  /* ========================== FIN RECOVERY ========================== */
+
   /* Analyze the SFDP structure to get driver information */
   SFDP_DEBUG_STR("4 - analyze the SFDP structure to get driver information")
   if (EXTMEM_SFDP_OK != SFDP_GetHeader(SFDPObject, &JEDEC_SFDP_Header))
