@@ -178,6 +178,53 @@ EXTMEM_DRIVER_NOR_SFDP_StatusTypeDef EXTMEM_DRIVER_NOR_SFDP_Init(void *Periphera
     XSPI_RegularCmdTypeDef rc;
     uint8_t d2[2] = {0x00U, 0x00U};
     uint8_t zero = 0x00U;
+    int spi_resp = 0;   /* 1 si la flash repond deja en SPI (ID 0xC2) */
+
+    extern void Recovery_UartInit(void);
+    extern void Recovery_UartStr(const char *s);
+    extern void Recovery_UartHex(uint8_t b);
+
+    /* ---- TELEMETRIE : ID flash AVANT recovery (ce point = XSPIM actif) ---- */
+    {
+      uint8_t idb[4];
+      const uint32_t dummies[5] = {20U, 5U, 8U, 16U, 4U};
+      int di;
+      Recovery_UartInit();
+      Recovery_UartStr("\r\nSFDPREC begin\r\n");
+
+      /* Config peripherique pour DOPI (MACRONIX + DHQC), comme l'appli. */
+      Recovery_UartStr("reinit MACRONIX/DHQC...\r\n");
+      hx->Init.MemoryType            = HAL_XSPI_MEMTYPE_MACRONIX;
+      hx->Init.DelayHoldQuarterCycle = HAL_XSPI_DHQC_ENABLE;
+      (void)HAL_XSPI_Init(hx);
+      Recovery_UartStr("reinit done\r\n");
+      /* ID en SPI (0x9F) : sur carte saine doit donner C2 81 3A */
+      idb[0] = idb[1] = idb[2] = 0U;
+      (void)memset(&rc, 0, sizeof(rc));
+      rc.OperationType = HAL_XSPI_OPTYPE_COMMON_CFG; rc.IOSelect = HAL_XSPI_SELECT_IO_7_0;
+      rc.InstructionMode = HAL_XSPI_INSTRUCTION_1_LINE; rc.InstructionWidth = HAL_XSPI_INSTRUCTION_8_BITS;
+      rc.Instruction = 0x9FU; rc.AddressMode = HAL_XSPI_ADDRESS_NONE; rc.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+      rc.DataMode = HAL_XSPI_DATA_1_LINE; rc.DataLength = 3U; rc.DummyCycles = 0U; rc.DQSMode = HAL_XSPI_DQS_DISABLE;
+      if (HAL_XSPI_Command(hx, &rc, 100U) == HAL_OK) { (void)HAL_XSPI_Receive(hx, idb, 100U); }
+      if (idb[0] == 0xC2U) { spi_resp = 1; }
+      Recovery_UartStr("SPI "); Recovery_UartHex(idb[0]); Recovery_UartHex(idb[1]); Recovery_UartHex(idb[2]); Recovery_UartStr("\r\n");
+      /* ID en OPI/DTR (0x9F60), plusieurs dummy : si la puce est en Octal -> C2 */
+      for (di = 0; di < 5; di++)
+      {
+        idb[0] = idb[1] = idb[2] = 0U;
+        (void)memset(&rc, 0, sizeof(rc));
+        rc.OperationType = HAL_XSPI_OPTYPE_COMMON_CFG; rc.IOSelect = HAL_XSPI_SELECT_IO_7_0;
+        rc.InstructionMode = HAL_XSPI_INSTRUCTION_8_LINES; rc.InstructionWidth = HAL_XSPI_INSTRUCTION_16_BITS;
+        rc.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_ENABLE; rc.Instruction = 0x9F60U;
+        rc.AddressMode = HAL_XSPI_ADDRESS_8_LINES; rc.AddressDTRMode = HAL_XSPI_ADDRESS_DTR_ENABLE;
+        rc.AddressWidth = HAL_XSPI_ADDRESS_32_BITS; rc.Address = 0U; rc.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+        rc.DataMode = HAL_XSPI_DATA_8_LINES; rc.DataDTRMode = HAL_XSPI_DATA_DTR_ENABLE; rc.DataLength = 4U;
+        rc.DummyCycles = dummies[di]; rc.DQSMode = HAL_XSPI_DQS_ENABLE;
+        if (HAL_XSPI_Command(hx, &rc, 100U) == HAL_OK) { (void)HAL_XSPI_Receive(hx, idb, 100U); }
+        Recovery_UartStr("OPI d="); Recovery_UartHex((uint8_t)dummies[di]); Recovery_UartStr(": ");
+        Recovery_UartHex(idb[0]); Recovery_UartHex(idb[1]); Recovery_UartHex(idb[2]); Recovery_UartStr("\r\n");
+      }
+    }
 
     /* --- Helper inline via macro locale : envoie une commande simple --- */
     #define REC_BASE() do {                                  \
@@ -189,6 +236,13 @@ EXTMEM_DRIVER_NOR_SFDP_StatusTypeDef EXTMEM_DRIVER_NOR_SFDP_Init(void *Periphera
         rc.DQSMode            = HAL_XSPI_DQS_DISABLE;         \
       } while(0)
 
+    /* Etapes OPI (1-4) : UNIQUEMENT si la flash ne repond PAS en SPI (= elle est
+     * en Octal). Sinon on la laisse en SPI et on ne lui envoie PAS de commandes
+     * 8 lignes (qu'elle interpreterait de travers et qui la re-basculeraient). */
+    if (spi_resp == 0)
+    {
+    /* Ralentit l'horloge seulement pour le chemin OPI (DTR marginal). */
+    (void)HAL_XSPI_SetClockPrescaler(hx, 19U);
     /* 1) Write Enable en OPI/DTR (0x06F9) */
     REC_BASE();
     rc.InstructionMode    = HAL_XSPI_INSTRUCTION_8_LINES;
@@ -247,16 +301,38 @@ EXTMEM_DRIVER_NOR_SFDP_StatusTypeDef EXTMEM_DRIVER_NOR_SFDP_Init(void *Periphera
     }
     HAL_Delay(10);
 
-    /* 5) Resets SPI (1 ligne) par securite */
-    REC_BASE();
-    rc.InstructionMode    = HAL_XSPI_INSTRUCTION_1_LINE;
-    rc.InstructionWidth   = HAL_XSPI_INSTRUCTION_8_BITS;
-    rc.InstructionDTRMode = HAL_XSPI_INSTRUCTION_DTR_DISABLE;
-    rc.AddressMode        = HAL_XSPI_ADDRESS_NONE;
-    rc.DataMode           = HAL_XSPI_DATA_NONE;
-    rc.Instruction = 0x66U; (void)HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
-    rc.Instruction = 0x99U; (void)HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
-    HAL_Delay(10);
+    }  /* fin if(spi_resp==0) : etapes OPI */
+
+    /* 5) En SPI (fiable) : efface DEFDOPI non-volatile (CR2 @0x40000000=0) puis
+     *    force le mode SPI courant (CR2 @0=0). PAS DE RESET ICI : un reset, tant
+     *    que DEFDOPI est encore grave, ferait re-rentrer la puce en OPI ! */
+    {
+      uint8_t one[1] = {0x00U};
+      /* WREN (SPI) */
+      REC_BASE();
+      rc.InstructionMode = HAL_XSPI_INSTRUCTION_1_LINE; rc.InstructionWidth = HAL_XSPI_INSTRUCTION_8_BITS;
+      rc.Instruction = 0x06U; rc.AddressMode = HAL_XSPI_ADDRESS_NONE; rc.DataMode = HAL_XSPI_DATA_NONE;
+      (void)HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+      /* WRCR2 @0x40000000 = 0x00 (SPI) -> efface boot-Octal non-volatile */
+      REC_BASE();
+      rc.InstructionMode = HAL_XSPI_INSTRUCTION_1_LINE; rc.InstructionWidth = HAL_XSPI_INSTRUCTION_8_BITS;
+      rc.Instruction = 0x72U; rc.AddressMode = HAL_XSPI_ADDRESS_1_LINE; rc.AddressWidth = HAL_XSPI_ADDRESS_32_BITS;
+      rc.Address = 0x40000000U; rc.DataMode = HAL_XSPI_DATA_1_LINE; rc.DataLength = 1U;
+      if (HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) == HAL_OK) { (void)HAL_XSPI_Transmit(hx, one, HAL_XSPI_TIMEOUT_DEFAULT_VALUE); }
+      HAL_Delay(10);
+      /* WREN (SPI) */
+      REC_BASE();
+      rc.InstructionMode = HAL_XSPI_INSTRUCTION_1_LINE; rc.InstructionWidth = HAL_XSPI_INSTRUCTION_8_BITS;
+      rc.Instruction = 0x06U; rc.AddressMode = HAL_XSPI_ADDRESS_NONE; rc.DataMode = HAL_XSPI_DATA_NONE;
+      (void)HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
+      /* WRCR2 @0x00000000 = 0x00 (SPI) -> mode courant = SPI */
+      REC_BASE();
+      rc.InstructionMode = HAL_XSPI_INSTRUCTION_1_LINE; rc.InstructionWidth = HAL_XSPI_INSTRUCTION_8_BITS;
+      rc.Instruction = 0x72U; rc.AddressMode = HAL_XSPI_ADDRESS_1_LINE; rc.AddressWidth = HAL_XSPI_ADDRESS_32_BITS;
+      rc.Address = 0x00000000U; rc.DataMode = HAL_XSPI_DATA_1_LINE; rc.DataLength = 1U;
+      if (HAL_XSPI_Command(hx, &rc, HAL_XSPI_TIMEOUT_DEFAULT_VALUE) == HAL_OK) { (void)HAL_XSPI_Transmit(hx, one, HAL_XSPI_TIMEOUT_DEFAULT_VALUE); }
+      HAL_Delay(10);
+    }
 
     /* 6) Deprotection en SPI : Write Enable (0x06) + Write Status Register (0x01)=0 */
     REC_BASE();
@@ -272,6 +348,19 @@ EXTMEM_DRIVER_NOR_SFDP_StatusTypeDef EXTMEM_DRIVER_NOR_SFDP_Init(void *Periphera
       (void)HAL_XSPI_Transmit(hx, &zero, HAL_XSPI_TIMEOUT_DEFAULT_VALUE);
     }
     HAL_Delay(10);
+
+    /* ---- TELEMETRIE : ID en SPI APRES recovery (C2 = deverrouille !) ---- */
+    {
+      uint8_t idb[4]; idb[0] = idb[1] = idb[2] = 0U;
+      (void)memset(&rc, 0, sizeof(rc));
+      rc.OperationType = HAL_XSPI_OPTYPE_COMMON_CFG; rc.IOSelect = HAL_XSPI_SELECT_IO_7_0;
+      rc.InstructionMode = HAL_XSPI_INSTRUCTION_1_LINE; rc.InstructionWidth = HAL_XSPI_INSTRUCTION_8_BITS;
+      rc.Instruction = 0x9FU; rc.AddressMode = HAL_XSPI_ADDRESS_NONE; rc.AlternateBytesMode = HAL_XSPI_ALT_BYTES_NONE;
+      rc.DataMode = HAL_XSPI_DATA_1_LINE; rc.DataLength = 3U; rc.DummyCycles = 0U; rc.DQSMode = HAL_XSPI_DQS_DISABLE;
+      if (HAL_XSPI_Command(hx, &rc, 100U) == HAL_OK) { (void)HAL_XSPI_Receive(hx, idb, 100U); }
+      Recovery_UartStr("SPIafter "); Recovery_UartHex(idb[0]); Recovery_UartHex(idb[1]); Recovery_UartHex(idb[2]);
+      Recovery_UartStr("\r\nSFDPREC end\r\n");
+    }
 
     #undef REC_BASE
   }

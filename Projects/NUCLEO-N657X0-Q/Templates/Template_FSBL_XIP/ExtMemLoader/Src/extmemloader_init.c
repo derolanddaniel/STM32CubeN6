@@ -111,7 +111,7 @@ static void Recovery_WrCR2(uint8_t dtr, uint32_t addr, uint8_t val)
 }
 
 /* --- Mini sortie UART brute sur USART1 (PE5/PE6, AF7) = VCP COM13 a 115200 --- */
-static void Recovery_UartInit(void)
+void Recovery_UartInit(void)
 {
   GPIO_InitTypeDef g = {0};
   uint32_t clk;
@@ -131,7 +131,7 @@ static void Recovery_UartInit(void)
   USART1->BRR = (clk + 57600U) / 115200U;
   USART1->CR1 = USART_CR1_TE | USART_CR1_UE;
 }
-static void Recovery_UartStr(const char *s)
+void Recovery_UartStr(const char *s)
 {
   while (*s != '\0')
   {
@@ -139,7 +139,7 @@ static void Recovery_UartStr(const char *s)
     USART1->TDR = (uint8_t)(*s++);
   }
 }
-static void Recovery_UartHex(uint8_t b)
+void Recovery_UartHex(uint8_t b)
 {
   static const char h[] = "0123456789ABCDEF";
   while ((USART1->ISR & USART_ISR_TXE_TXFNF) == 0U) {}
@@ -474,14 +474,9 @@ static void MX_XSPI2_Init(void)
   }
   /* USER CODE BEGIN XSPI2_Init 2 */
 
-  /* RECOVERY : sortir la flash du mode Octal (CR2) tant que le peripherique a
-   * la config MACRONIX/DHQC, AVANT toute lecture SFDP.
-   * On ralentit fortement l'horloge XSPI : le DTR octal a pleine vitesse n'est
-   * pas fiable sans calibration, et la puce doit recevoir nos commandes. */
-  (void)HAL_XSPI_SetClockPrescaler(&hxspi2, 19U);
-  Recovery_Telemetry();   /* DIAGNOSTIC LED : la puce repond-elle en OPI / SPI ? */
-  Recovery_ExitOPI();
-  (void)HAL_XSPI_SetClockPrescaler(&hxspi2, 0U);
+  /* La recovery est faite plus tard, dans le driver SFDP (apres SAL_XSPI_Init),
+   * la ou le XSPIM est configure et ou les commandes atteignent la flash. */
+  (void)Recovery_Telemetry; (void)Recovery_ExitOPI; (void)Recovery_WrCR2;
 
   /* USER CODE END XSPI2_Init 2 */
 

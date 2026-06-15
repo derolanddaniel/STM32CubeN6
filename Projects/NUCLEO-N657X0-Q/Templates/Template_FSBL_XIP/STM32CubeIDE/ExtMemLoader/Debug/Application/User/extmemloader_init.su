@@ -1,10 +1,7 @@
-C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:134:13:Recovery_UartStr	0	static
-C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:142:13:Recovery_UartHex	0	static
-C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:114:13:Recovery_UartInit	48	static
-C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:158:13:Recovery_Telemetry	152	static
-C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:69:13:Recovery_WrCR2	104	static
-C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:258:13:Recovery_ExitOPI	8	static
-C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:494:6:Error_Handler	0	static
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:114:6:Recovery_UartInit	48	static
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:134:6:Recovery_UartStr	0	static
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:142:6:Recovery_UartHex	0	static
+C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:489:6:Error_Handler	0	static
 C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:360:6:SystemClock_Config	224	static
 C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:445:13:MX_XSPI2_Init	8	static
 C:/Users/Daniel.DE-ROLAND80/Documents/GitHub/ST/STM32CubeN6/Projects/NUCLEO-N657X0-Q/Templates/Template_FSBL_XIP/ExtMemLoader/Src/extmemloader_init.c:275:10:extmemloader_Init	8	static,ignoring_inline_asm
